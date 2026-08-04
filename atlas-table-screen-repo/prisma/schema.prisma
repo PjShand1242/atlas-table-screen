@@ -1,0 +1,32 @@
+// Database schema. Postgres in production (Vercel/Neon), works locally too.
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String   @id @default(cuid())
+  username     String   @unique          // public handle friends search by
+  usernameLower String  @unique          // lowercased, for case-insensitive lookup
+  passwordHash String
+  displayName  String
+  avatarFeatures Json?                    // the emoji-builder feature object
+  createdAt    DateTime @default(now())
+  stamps       Stamp[]
+}
+
+model Stamp {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  country   String
+  type      String   // "food" | "cinema"
+  createdAt DateTime @default(now())
+
+  @@unique([userId, country, type])       // one stamp per country per type
+  @@index([userId])
+}

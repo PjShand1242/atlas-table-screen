@@ -451,9 +451,7 @@ function Onboarding({ onDone, submitting, authError }) {
         style={{ width: "100%", boxSizing: "border-box", margin: "6px 0 14px", padding: "12px 14px", borderRadius: 8, border: `1px solid ${C.line}`, background: C.ink, color: C.paper, fontSize: 15, fontFamily: "inherit" }} />
 
       <label style={{ color: C.dim, fontSize: 12, letterSpacing: "0.08em", textTransform: "uppercase" }}>Password</label>
-      <input value={password} onChange={e => setPassword(e.target.value)} type="password" placeholder="at least 6 characters"
-        style={{ width: "100%", boxSizing: "border-box", margin: "6px 0 18px", padding: "12px 14px", borderRadius: 8, border: `1px solid ${C.line}`, background: C.ink, color: C.paper, fontSize: 15, fontFamily: "inherit" }} />
-
+      <PasswordField value={password} onChange={e => setPassword(e.target.value)} placeholder="at least 6 characters" />
       <label style={{ color: C.dim, fontSize: 12, letterSpacing: "0.08em", textTransform: "uppercase" }}>Passport photo</label>
       <div style={{ display: "flex", gap: 12, alignItems: "center", margin: "8px 0 12px" }}>
         <button onClick={() => fileRef.current && fileRef.current.click()} style={{
@@ -746,7 +744,7 @@ function CountryView({ country, onBack, onStamp }) {
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState(null);
 
-  useEffect(() => { setCache(null); loadCache(country).then(setCache); }, [country]);
+  useEffect(() => { setCache(null); setCache(loadCache(country)); }, [country]);
 
   const update = (patch) => {
     setCache(prev => {
@@ -888,6 +886,20 @@ function CountryView({ country, onBack, onStamp }) {
 
 /* ---------- app ---------- */
 
+/* ---------- password field with show/hide ---------- */
+function PasswordField({ value, onChange, placeholder }) {
+  const [show, setShow] = useState(false);
+  return (
+    <div style={{ position: "relative", margin: "6px 0 18px" }}>
+      <input value={value} onChange={onChange} type={show ? "text" : "password"} placeholder={placeholder}
+        style={{ width: "100%", boxSizing: "border-box", padding: "12px 52px 12px 14px", borderRadius: 8, border: `1px solid ${C.line}`, background: C.ink, color: C.paper, fontSize: 15, fontFamily: "inherit" }} />
+      <button type="button" onClick={() => setShow(v => !v)}
+        style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", color: C.brass, cursor: "pointer", fontSize: 13, fontFamily: "inherit" }}>
+        {show ? "Hide" : "Show"}
+      </button>
+    </div>
+  );
+}
 /* ---------- auth gate: sign up or log in ---------- */
 function AuthGate({ onAuthed }) {
   const [mode, setMode] = useState("signup"); // "signup" | "login"
@@ -915,8 +927,7 @@ function AuthGate({ onAuthed }) {
         <h2 style={{ fontFamily: "Georgia, serif", color: C.paper, margin: "8px 0 14px", fontSize: 26 }}>Log in</h2>
         <input value={lu} onChange={e => setLu(e.target.value)} placeholder="Username" autoCapitalize="none"
           style={{ width: "100%", boxSizing: "border-box", margin: "6px 0 12px", padding: "12px 14px", borderRadius: 8, border: `1px solid ${C.line}`, background: C.ink, color: C.paper, fontSize: 15, fontFamily: "inherit" }} />
-        <input value={lp} onChange={e => setLp(e.target.value)} type="password" placeholder="Password"
-          style={{ width: "100%", boxSizing: "border-box", margin: "0 0 16px", padding: "12px 14px", borderRadius: 8, border: `1px solid ${C.line}`, background: C.ink, color: C.paper, fontSize: 15, fontFamily: "inherit" }} />
+       <PasswordField value={lp} onChange={e => setLp(e.target.value)} placeholder="Password" />
         {err && <p style={{ color: C.chili, fontSize: 13, margin: "0 0 8px" }}>{err}</p>}
         <Btn onClick={doLogin} disabled={submitting || !lu || !lp} style={{ width: "100%" }}>{submitting ? "Logging in…" : "Log in"}</Btn>
         <p style={{ color: C.dim, fontSize: 13, marginTop: 14, textAlign: "center" }}>

@@ -66,6 +66,31 @@ const CONTINENTS = [
 const orderOf = ct => MAPDATA.continents[ct.id].order;
 function allCountries() { return MAPDATA ? Object.keys(MAPDATA.cc) : []; }
 
+function flattenRecipeList(list) {
+  if (!Array.isArray(list)) return [];
+  const out = [];
+  for (const x of list) {
+    if (x == null) continue;
+    if (typeof x === "string") { out.push({ text: x }); }
+    else if (typeof x === "object") {
+      const heading = x.section || x.group || x.title || x.name || x.step || null;
+      const items = x.items || x.ingredients || x.steps || null;
+      if (heading && Array.isArray(items)) {
+        out.push({ heading: String(heading) });
+        for (const it of items) out.push({ text: typeof it === "string" ? it : JSON.stringify(it) });
+      } else if (Array.isArray(items)) {
+        for (const it of items) out.push({ text: typeof it === "string" ? it : JSON.stringify(it) });
+      } else if (heading) {
+        out.push({ text: String(heading) });
+      } else {
+        out.push({ text: Object.values(x).filter(v => typeof v === "string").join(" — ") || JSON.stringify(x) });
+      }
+    } else {
+      out.push({ text: String(x) });
+    }
+  }
+  return out;
+}
 
 function flagOf(name) {
   const cc = MAPDATA.cc[name];
@@ -646,13 +671,21 @@ function RecipePanel({ data, done, onCooked, sources }) {
         <div style={{ background: C.ink, borderRadius: 10, padding: 16, border: `1px solid ${C.line}` }}>
           <Eyebrow color={C.chili}>Ingredients</Eyebrow>
           <ul style={{ color: C.paper, fontSize: 14, lineHeight: 1.7, paddingLeft: 18, margin: "8px 0 0" }}>
-            {data.ingredients.map((x, i) => <li key={i}>{x}</li>)}
+                        {flattenRecipeList(data.ingredients).map((r, i) => (
+              r.heading
+                ? <li key={i} style={{ listStyle: "none", marginLeft: -18, marginTop: i ? 8 : 0, fontWeight: 700, color: C.brass }}>{r.heading}</li>
+                : <li key={i}>{r.text}</li>
+            ))}
           </ul>
         </div>
         <div style={{ background: C.ink, borderRadius: 10, padding: 16, border: `1px solid ${C.line}` }}>
           <Eyebrow color={C.chili}>Method</Eyebrow>
           <ol style={{ color: C.paper, fontSize: 14, lineHeight: 1.7, paddingLeft: 18, margin: "8px 0 0" }}>
-            {data.steps.map((x, i) => <li key={i} style={{ marginBottom: 6 }}>{x}</li>)}
+                        {flattenRecipeList(data.steps).map((r, i) => (
+              r.heading
+                ? <li key={i} style={{ listStyle: "none", marginLeft: -18, marginTop: i ? 8 : 0, fontWeight: 700, color: C.brass }}>{r.heading}</li>
+                : <li key={i} style={{ marginBottom: 6 }}>{r.text}</li>
+            ))}
           </ol>
         </div>
       </div>

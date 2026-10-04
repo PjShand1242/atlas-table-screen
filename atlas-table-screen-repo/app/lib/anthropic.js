@@ -37,7 +37,7 @@ export async function generate(kind, { country, prefs, dish }) {
   const useSearch = kind !== "story" && kind !== "chat";
   const msg = await client.messages.create({
     model: "claude-sonnet-4-6",
-    max_tokens: 1500,
+    max_tokens: 4000,
     messages: [{ role: "user", content: prompt }],
     ...(useSearch ? { tools: [{ type: "web_search_20250305", name: "web_search" }] } : {}),
   });
@@ -52,9 +52,60 @@ export async function generate(kind, { country, prefs, dish }) {
         if (r.url && !seen.has(r.url)) { seen.add(r.url); let host = r.url; try { host = new URL(r.url).hostname.replace(/^www\./, ""); } catch {} sources.push({ url: r.url, host }); }
       }
   }
-  const m = text.match(/\{[\s\S]*\}/);
-  if (!m) throw new Error("no JSON in model reply");
-  const parsed = JSON.parse(m[0]);
+  const parsed = extractJSON(text);
+  if (!parsed) throw new Error("no valid JSON in model reply");
   parsed.__sources = sources.slice(0, 6);
   return parsed;
+}
+
+// Robustly pull a JSON object out of the model's reply. Handles prose around it,
+// code fences, and (critically) a response truncated mid-object by closing any
+// still-open brackets/strings so JSON.parse succeeds.
+function extractJSON(text) {
+  if (!text) return null;
+  // strip code fences if present
+  let t = text.replace(/```json/gi, "").replace(/```/g, "");
+  const start = t.indexOf("{");
+  if (start === -1) return null;
+  t = t.slice(start);
+
+  // First try: find the matching close brace for a complete object.
+  let depth = 0, inStr = false, esc = false, end = -1;
+  for (let i = 0; i < t.length; i++) {
+    const c = t[i];
+    if (esc) { esc = false; continue; }
+    if (c === "\\") { esc = true; continue; }
+    if (c === '"') { inStr = !inStr; continue; }
+    if (inStr) continue;
+    if (c === "{") depth++;
+    else if (c === "}") { depth--; if (depth === 0) { end = i; break; } }
+  }
+  if (end !== -1) {
+    try { return JSON.parse(t.slice(0, end + 1)); } catch {}
+  }
+
+  // Fallback: response was likely truncated. Close open string, then close any
+  // open arrays/objects in the right order, and parse the repaired fragment.
+  let repaired = t;
+  // balance quotes
+  const quoteCount = (repaired.match(/(?<!\\)"/g) || []).length;
+  if (quoteCount % 2 !== 0) repaired += '"';
+  // walk and record the open-bracket stack
+  const stack = [];
+  inStr = false; esc = false;
+  for (let i = 0; i < repaired.length; i++) {
+    const c = repaired[i];
+    if (esc) { esc = false; continue; }
+    if (c === "\\") { esc = true; continue; }
+    if (c === '"') { inStr = !inStr; continue; }
+    if (inStr) continue;
+    if (c === "{") stack.push("}");
+    else if (c === "[") stack.push("]");
+    else if (c === "}" || c === "]") stack.pop();
+  }
+  // drop a dangling trailing comma before closing
+  repaired = repaired.replace(/,\s*$/, "");
+  while (stack.length) repaired += stack.pop();
+  try { return JSON.parse(repaired); } catch {}
+  return null;
 }

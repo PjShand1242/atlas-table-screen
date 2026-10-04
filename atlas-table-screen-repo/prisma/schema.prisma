@@ -12,6 +12,8 @@ model User {
   id           String   @id @default(cuid())
   username     String   @unique          // public handle friends search by
   usernameLower String  @unique          // lowercased, for case-insensitive lookup
+  email        String?                   // for password reset (optional so old rows survive)
+  emailLower   String?  @unique           // lowercased, for case-insensitive lookup
   passwordHash String
   displayName  String
   avatarFeatures Json?                    // the emoji-builder feature object
@@ -28,5 +30,15 @@ model Stamp {
   createdAt DateTime @default(now())
 
   @@unique([userId, country, type])       // one stamp per country per type
+  @@index([userId])
+}
+
+model PasswordReset {
+  id        String   @id @default(cuid())
+  userId    String
+  tokenHash String   @unique               // we store a hash of the token, never the raw token
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime @default(now())
   @@index([userId])
 }

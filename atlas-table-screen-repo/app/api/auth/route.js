@@ -11,14 +11,20 @@ export async function POST(req) {
   if (action === "logout") { await clearSession(); return Response.json({ ok: true }); }
 
   if (action === "signup") {
-    const { username, password, displayName, avatarFeatures } = body;
+    const { username, password, displayName, avatarFeatures, email } = body;
     if (!USERNAME_RE.test(username || "")) return Response.json({ error: "Username must be 3-20 letters, numbers, or underscore." }, { status: 400 });
     if (!password || password.length < 6) return Response.json({ error: "Password must be at least 6 characters." }, { status: 400 });
     const exists = await prisma.user.findUnique({ where: { usernameLower: username.toLowerCase() } });
     if (exists) return Response.json({ error: "That username is taken." }, { status: 409 });
+    const emailClean = (email || "").trim();
+    if (!emailClean || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(emailClean))
+      return Response.json({ error: "Enter a valid email (used for password reset)." }, { status: 400 });
+    const emailTaken = await prisma.user.findUnique({ where: { emailLower: emailClean.toLowerCase() } });
+    if (emailTaken) return Response.json({ error: "That email is already registered." }, { status: 409 });
     const user = await prisma.user.create({
       data: {
         username, usernameLower: username.toLowerCase(),
+        email: emailClean, emailLower: emailClean.toLowerCase(),
         passwordHash: await hashPassword(password),
         displayName: displayName || username,
         avatarFeatures: avatarFeatures || null,
@@ -30,7 +36,8 @@ export async function POST(req) {
 
   if (action === "login") {
     const { username, password } = body;
-    const user = await prisma.user.findUnique({ where: { usernameLower: (username || "").toLowerCase() } });
+    const idLower = (username || "").toLowerCase();
+    const user = await prisma.user.findFirst({ where: { OR: [{ usernameLower: idLower }, { emailLower: idLower }] } });
     if (!user || !(await verifyPassword(password || "", user.passwordHash)))
       return Response.json({ error: "Wrong username or password." }, { status: 401 });
     await createSession(user.id);
@@ -51,6 +58,7 @@ export async function GET() {
   if (!user) return Response.json({ user: null });
   return Response.json({ user: {
     username: user.username, displayName: user.displayName,
+    email: user.email,
     avatarFeatures: user.avatarFeatures,
     stamps: user.stamps.map(s => ({ country: s.country, type: s.type })),
   }});

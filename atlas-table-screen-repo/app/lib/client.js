@@ -13,6 +13,10 @@ export async function login(username, password) {
   const r = await fetch("/api/auth", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "login", username, password }) });
   const j = await r.json(); if (!r.ok) throw new Error(j.error || "login failed"); return j;
 }
+export async function requestReset(identifier) {
+  const r = await fetch("/api/reset-request", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ identifier }) });
+  return (await r.json());
+}
 export async function logout() { await fetch("/api/auth", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "logout" }) }); }
 
 // Generation now goes through the backend. Same shape the UI already expects.
@@ -23,6 +27,12 @@ export async function generate(kind, args) {
 export async function awardStamp(country, type) {
   const r = await fetch("/api/sync", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ country, type }) });
   const j = await r.json(); if (!r.ok) throw new Error(j.error || "sync failed"); return j.stamps;
+}
+export async function updateAccount(patch) {
+  const r = await fetch("/api/profile", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(patch) });
+  const j = await r.json();
+  if (!r.ok) throw new Error(j.error || "update failed");
+  return j;
 }
 export async function saveProfile(patch) {
   const r = await fetch("/api/profile", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(patch) });

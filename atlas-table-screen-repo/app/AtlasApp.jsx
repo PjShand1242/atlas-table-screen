@@ -1,7 +1,7 @@
 "use client";
 import { useState, useEffect, useCallback, useRef } from "react";
-import { me, signup, login, logout, generate as apiGenerate,
-         awardStamp, saveProfile, lookupFriend, loadCache, saveCache } from "./lib/client";
+import { me, signup, login, logout, requestReset, generate as apiGenerate,
+         awardStamp, saveProfile, updateAccount, lookupFriend, loadCache, saveCache } from "./lib/client";
 import * as AvatarLib from "./lib/avatar";
 
 // Follow-up chat helper: posts the running transcript to the backend generate proxy.
@@ -428,6 +428,7 @@ function ContinentMap({ continent, stamps, onPickCountry, onLockedTap }) {
 function Onboarding({ onDone, submitting, authError }) {
   const [name, setName] = useState("");
   const [username, setUsername] = useState("");
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [av, setAv] = useState(AVATARS[0]);
   const [img, setImg] = useState(null);
@@ -450,8 +451,13 @@ function Onboarding({ onDone, submitting, authError }) {
       <input value={username} onChange={e => setUsername(e.target.value.replace(/[^a-zA-Z0-9_]/g, ""))} placeholder="3-20 letters, numbers, _" autoCapitalize="none"
         style={{ width: "100%", boxSizing: "border-box", margin: "6px 0 14px", padding: "12px 14px", borderRadius: 8, border: `1px solid ${C.line}`, background: C.ink, color: C.paper, fontSize: 15, fontFamily: "inherit" }} />
 
+      <label style={{ color: C.dim, fontSize: 12, letterSpacing: "0.08em", textTransform: "uppercase" }}>Email <span style={{ textTransform: "none", letterSpacing: 0 }}>(for password reset)</span></label>
+      <input value={email} onChange={e => setEmail(e.target.value)} type="email" placeholder="you@example.com" autoCapitalize="none"
+        style={{ width: "100%", boxSizing: "border-box", margin: "6px 0 14px", padding: "12px 14px", borderRadius: 8, border: `1px solid ${C.line}`, background: C.ink, color: C.paper, fontSize: 15, fontFamily: "inherit" }} />
+
       <label style={{ color: C.dim, fontSize: 12, letterSpacing: "0.08em", textTransform: "uppercase" }}>Password</label>
       <PasswordField value={password} onChange={e => setPassword(e.target.value)} placeholder="at least 6 characters" />
+
       <label style={{ color: C.dim, fontSize: 12, letterSpacing: "0.08em", textTransform: "uppercase" }}>Passport photo</label>
       <div style={{ display: "flex", gap: 12, alignItems: "center", margin: "8px 0 12px" }}>
         <button onClick={() => fileRef.current && fileRef.current.click()} style={{
@@ -488,7 +494,7 @@ function Onboarding({ onDone, submitting, authError }) {
       )}
 
       {authError && <p style={{ color: C.chili, fontSize: 13, margin: "0 0 8px" }}>{authError}</p>}
-      <Btn onClick={() => name.trim() && username.length >= 3 && password.length >= 6 && onDone({ name: name.trim(), username, password, avatar: av, avatarImg: img, avatarFeatures: feat })} disabled={!name.trim() || username.length < 3 || password.length < 6 || submitting} style={{ width: "100%", marginTop: img ? 10 : 0 }}>
+      <Btn onClick={() => name.trim() && username.length >= 3 && email.includes("@") && password.length >= 6 && onDone({ name: name.trim(), username, email, password, avatar: av, avatarImg: img, avatarFeatures: feat })} disabled={!name.trim() || username.length < 3 || !email.includes("@") || password.length < 6 || submitting} style={{ width: "100%", marginTop: img ? 10 : 0 }}>
         {submitting ? "Issuing passport…" : "Begin the journey"}
       </Btn>
       {builderOpen && <EmojiBuilder initial={feat}
@@ -499,12 +505,34 @@ function Onboarding({ onDone, submitting, authError }) {
 }
 
 /* ---------- passport ---------- */
-function Passport({ profile, stamps, onClose, onNewAvatar }) {
+function Passport({ profile, stamps, onClose, onNewAvatar, onLogout, onProfileSaved }) {
   const total = allCountries().length * 2;
   const fileRef = useRef(null);
   const [photoErr, setPhotoErr] = useState(null);
   const [busyPhoto, setBusyPhoto] = useState(false);
   const [builderOpen, setBuilderOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [sName, setSName] = useState(profile.name || "");
+  const [sEmail, setSEmail] = useState(profile.email || "");
+  const [curPw, setCurPw] = useState("");
+  const [newPw, setNewPw] = useState("");
+  const [saveMsg, setSaveMsg] = useState(null);
+  const [saveErr, setSaveErr] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const saveSettings = async () => {
+    setSaving(true); setSaveErr(null); setSaveMsg(null);
+    const patch = {};
+    if (sName && sName !== profile.name) patch.displayName = sName;
+    if (sEmail !== (profile.email || "")) patch.email = sEmail;
+    if (newPw) { patch.newPassword = newPw; patch.currentPassword = curPw; }
+    if (Object.keys(patch).length === 0) { setSaveErr("Nothing changed."); setSaving(false); return; }
+    try {
+      const res = await updateAccount(patch);
+      setSaveMsg("Saved."); setCurPw(""); setNewPw("");
+      if (onProfileSaved) onProfileSaved({ name: res.displayName, email: res.email });
+    } catch (e) { setSaveErr(e.message || "Couldn't save."); }
+    setSaving(false);
+  };
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(6,10,16,0.82)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={onClose}>
       <div onClick={e => e.stopPropagation()} style={{ width: "100%", maxWidth: 460, maxHeight: "85vh", overflowY: "auto", background: C.panel, border: `2px solid ${C.brass}`, borderRadius: 14, padding: 24 }}>
@@ -516,7 +544,10 @@ function Passport({ profile, stamps, onClose, onNewAvatar }) {
               <h2 style={{ fontFamily: "Georgia, serif", color: C.paper, margin: "2px 0", fontSize: 22 }}>{profile.name}</h2>
             </div>
           </div>
-          <Btn ghost onClick={onClose} style={{ padding: "6px 14px" }}>Close</Btn>
+          <div style={{ display: "flex", gap: 8 }}>
+            <Btn ghost onClick={onLogout} style={{ padding: "6px 14px" }}>Log out</Btn>
+            <Btn ghost onClick={onClose} style={{ padding: "6px 14px" }}>Close</Btn>
+          </div>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "8px 0 2px" }}>
           <button onClick={() => fileRef.current && fileRef.current.click()} style={{
@@ -539,6 +570,31 @@ function Passport({ profile, stamps, onClose, onNewAvatar }) {
         {builderOpen && <EmojiBuilder initial={profile.avatarFeatures}
           onDone={d => { setBuilderOpen(false); setPhotoErr(null); onNewAvatar(d); }}
           onCancel={() => setBuilderOpen(false)} />}
+        <div style={{ marginTop: 10 }}>
+          <button onClick={() => { setSettingsOpen(v => !v); setSaveMsg(null); setSaveErr(null); }} style={{
+            background: "none", border: `1px solid ${C.line}`, borderRadius: 8, color: C.dim,
+            cursor: "pointer", fontSize: 12, fontWeight: 700, padding: "6px 12px", fontFamily: "inherit",
+          }}>⚙️ {settingsOpen ? "Hide account settings" : "Account settings"}</button>
+        </div>
+        {settingsOpen && (
+          <div style={{ marginTop: 12, padding: 14, border: `1px solid ${C.line}`, borderRadius: 10, background: C.ink }}>
+            <label style={{ color: C.dim, fontSize: 12, letterSpacing: "0.08em", textTransform: "uppercase" }}>Display name</label>
+            <input value={sName} onChange={e => setSName(e.target.value)}
+              style={{ width: "100%", boxSizing: "border-box", margin: "6px 0 12px", padding: "10px 12px", borderRadius: 8, border: `1px solid ${C.line}`, background: C.panel, color: C.paper, fontSize: 14, fontFamily: "inherit" }} />
+            <label style={{ color: C.dim, fontSize: 12, letterSpacing: "0.08em", textTransform: "uppercase" }}>Email</label>
+            <input value={sEmail} onChange={e => setSEmail(e.target.value)} type="email" autoCapitalize="none"
+              style={{ width: "100%", boxSizing: "border-box", margin: "6px 0 12px", padding: "10px 12px", borderRadius: 8, border: `1px solid ${C.line}`, background: C.panel, color: C.paper, fontSize: 14, fontFamily: "inherit" }} />
+            <div style={{ borderTop: `1px solid ${C.line}`, margin: "4px 0 12px" }} />
+            <label style={{ color: C.dim, fontSize: 12, letterSpacing: "0.08em", textTransform: "uppercase" }}>Change password <span style={{ textTransform: "none", letterSpacing: 0 }}>(leave blank to keep)</span></label>
+            <input value={curPw} onChange={e => setCurPw(e.target.value)} type="password" placeholder="Current password"
+              style={{ width: "100%", boxSizing: "border-box", margin: "6px 0 8px", padding: "10px 12px", borderRadius: 8, border: `1px solid ${C.line}`, background: C.panel, color: C.paper, fontSize: 14, fontFamily: "inherit" }} />
+            <input value={newPw} onChange={e => setNewPw(e.target.value)} type="password" placeholder="New password (min 6)"
+              style={{ width: "100%", boxSizing: "border-box", margin: "0 0 12px", padding: "10px 12px", borderRadius: 8, border: `1px solid ${C.line}`, background: C.panel, color: C.paper, fontSize: 14, fontFamily: "inherit" }} />
+            {saveErr && <p style={{ color: C.chili, fontSize: 13, margin: "0 0 8px" }}>{saveErr}</p>}
+            {saveMsg && <p style={{ color: C.brass, fontSize: 13, margin: "0 0 8px" }}>{saveMsg}</p>}
+            <Btn onClick={saveSettings} disabled={saving} style={{ width: "100%" }}>{saving ? "Saving…" : "Save changes"}</Btn>
+          </div>
+        )}
         <p style={{ color: C.dim, fontSize: 13 }}>{stamps.length} of {total} stamps · 🍴 kitchen · 🎬 cinema · stamps unlock new countries</p>
         {stamps.length === 0 ? (
           <p style={{ color: C.dim, fontStyle: "italic" }}>No stamps yet — open a country's Kitchen or Cinema to earn your first.</p>
@@ -886,6 +942,7 @@ function CountryView({ country, onBack, onStamp }) {
 
 /* ---------- app ---------- */
 
+
 /* ---------- password field with show/hide ---------- */
 function PasswordField({ value, onChange, placeholder }) {
   const [show, setShow] = useState(false);
@@ -900,6 +957,7 @@ function PasswordField({ value, onChange, placeholder }) {
     </div>
   );
 }
+
 /* ---------- auth gate: sign up or log in ---------- */
 function AuthGate({ onAuthed }) {
   const [mode, setMode] = useState("signup"); // "signup" | "login"
@@ -910,7 +968,7 @@ function AuthGate({ onAuthed }) {
   const doSignup = async (d) => {
     setSubmitting(true); setErr(null);
     try {
-      const u = await signup({ username: d.username, password: d.password, displayName: d.name, avatarFeatures: d.avatarFeatures || null });
+      const u = await signup({ username: d.username, email: d.email, password: d.password, displayName: d.name, avatarFeatures: d.avatarFeatures || null });
       onAuthed(u);
     } catch (e) { setErr(e.message || "Sign up failed"); setSubmitting(false); }
   };
@@ -919,20 +977,56 @@ function AuthGate({ onAuthed }) {
     try { const u = await login(lu, lp); onAuthed(u); }
     catch (e) { setErr(e.message || "Log in failed"); setSubmitting(false); }
   };
+  const [resetId, setResetId] = useState("");
+  const [resetSent, setResetSent] = useState(false);
+  const doReset = async () => {
+    setSubmitting(true); setErr(null);
+    try { await requestReset(resetId); setResetSent(true); }
+    catch { setResetSent(true); } // we always show the same message
+    setSubmitting(false);
+  };
 
   if (mode === "login") {
     return (
       <div style={{ maxWidth: 460, margin: "40px auto", background: C.panel, border: `1px solid ${C.line}`, borderRadius: 14, padding: 28 }}>
         <Eyebrow>Welcome back</Eyebrow>
         <h2 style={{ fontFamily: "Georgia, serif", color: C.paper, margin: "8px 0 14px", fontSize: 26 }}>Log in</h2>
-        <input value={lu} onChange={e => setLu(e.target.value)} placeholder="Username" autoCapitalize="none"
+        <input value={lu} onChange={e => setLu(e.target.value)} placeholder="Username or email" autoCapitalize="none"
           style={{ width: "100%", boxSizing: "border-box", margin: "6px 0 12px", padding: "12px 14px", borderRadius: 8, border: `1px solid ${C.line}`, background: C.ink, color: C.paper, fontSize: 15, fontFamily: "inherit" }} />
-       <PasswordField value={lp} onChange={e => setLp(e.target.value)} placeholder="Password" />
+        <PasswordField value={lp} onChange={e => setLp(e.target.value)} placeholder="Password" />
         {err && <p style={{ color: C.chili, fontSize: 13, margin: "0 0 8px" }}>{err}</p>}
         <Btn onClick={doLogin} disabled={submitting || !lu || !lp} style={{ width: "100%" }}>{submitting ? "Logging in…" : "Log in"}</Btn>
         <p style={{ color: C.dim, fontSize: 13, marginTop: 14, textAlign: "center" }}>
+          <button onClick={() => { setErr(null); setResetSent(false); setResetId(lu); setMode("forgot"); }} style={{ background: "none", border: "none", color: C.brass, cursor: "pointer", fontFamily: "inherit", fontSize: 13, textDecoration: "underline" }}>Forgot password?</button>
+        </p>
+        <p style={{ color: C.dim, fontSize: 13, marginTop: 2, textAlign: "center" }}>
           New here? <button onClick={() => { setErr(null); setMode("signup"); }} style={{ background: "none", border: "none", color: C.brass, cursor: "pointer", fontFamily: "inherit", fontSize: 13, textDecoration: "underline" }}>Issue a passport</button>
         </p>
+      </div>
+    );
+  }
+
+  if (mode === "forgot") {
+    return (
+      <div style={{ maxWidth: 460, margin: "40px auto", background: C.panel, border: `1px solid ${C.line}`, borderRadius: 14, padding: 28 }}>
+        <Eyebrow>Reset password</Eyebrow>
+        <h2 style={{ fontFamily: "Georgia, serif", color: C.paper, margin: "8px 0 6px", fontSize: 26 }}>Forgot your password?</h2>
+        {resetSent ? (
+          <div>
+            <p style={{ color: C.dim, fontSize: 14 }}>If an account matches that username or email, we've sent a reset link. Check your inbox (and spam folder) — the link expires in an hour.</p>
+            <Btn onClick={() => { setErr(null); setMode("login"); }} style={{ width: "100%", marginTop: 8 }}>Back to log in</Btn>
+          </div>
+        ) : (
+          <div>
+            <p style={{ color: C.dim, fontSize: 14, marginTop: 0 }}>Enter your username or the email you signed up with, and we'll send a reset link.</p>
+            <input value={resetId} onChange={e => setResetId(e.target.value)} placeholder="Username or email" autoCapitalize="none"
+              style={{ width: "100%", boxSizing: "border-box", margin: "6px 0 14px", padding: "12px 14px", borderRadius: 8, border: `1px solid ${C.line}`, background: C.ink, color: C.paper, fontSize: 15, fontFamily: "inherit" }} />
+            <Btn onClick={doReset} disabled={submitting || !resetId.trim()} style={{ width: "100%" }}>{submitting ? "Sending…" : "Send reset link"}</Btn>
+            <p style={{ color: C.dim, fontSize: 13, marginTop: 14, textAlign: "center" }}>
+              <button onClick={() => { setErr(null); setMode("login"); }} style={{ background: "none", border: "none", color: C.brass, cursor: "pointer", fontFamily: "inherit", fontSize: 13, textDecoration: "underline" }}>Back to log in</button>
+            </p>
+          </div>
+        )}
       </div>
     );
   }
@@ -1030,7 +1124,7 @@ export default function App() {
     fetch("/data/mapdata.json").then(r => r.json()).then(d => { MAPDATA = d; setMapReady(true); });
     me().then(u => {
       if (u) {
-        setProfile({ name: u.displayName || u.username, username: u.username,
+        setProfile({ name: u.displayName || u.username, username: u.username, email: u.email || "",
                      avatarImg: u.avatarFeatures ? AvatarLib.featuresToUrl(u.avatarFeatures) : null,
                      avatarFeatures: u.avatarFeatures || null });
         setStamps((u.stamps || []).map(s => ({ ...s, ts: Date.now() })));
@@ -1100,7 +1194,7 @@ export default function App() {
 
       <main style={{ maxWidth: 900, margin: "0 auto", paddingTop: 22 }}>
         {!profile ? (
-          <AuthGate onAuthed={u => { setProfile({ name: u.displayName || u.username, username: u.username, avatarImg: u.avatarFeatures ? AvatarLib.featuresToUrl(u.avatarFeatures) : null, avatarFeatures: u.avatarFeatures || null }); me().then(fu => { if (fu) setStamps((fu.stamps||[]).map(s=>({...s,ts:Date.now()}))); }); }} />
+          <AuthGate onAuthed={u => { setProfile({ name: u.displayName || u.username, username: u.username, email: u.email || "", avatarImg: u.avatarFeatures ? AvatarLib.featuresToUrl(u.avatarFeatures) : null, avatarFeatures: u.avatarFeatures || null }); me().then(fu => { if (fu) setStamps((fu.stamps||[]).map(s=>({...s,ts:Date.now()}))); }); }} />
         ) : view.mode === "globe" ? (
           <div>
             <FriendLookup />
@@ -1134,7 +1228,9 @@ export default function App() {
         </div>
       )}
       {passportOpen && profile && <Passport profile={profile} stamps={stamps} onClose={() => setPassportOpen(false)}
-        onNewAvatar={d => { const p = { ...profile, avatarImg: d.url, avatarFeatures: d.features }; setProfile(p); persist(p); }} />}
+        onNewAvatar={d => { const p = { ...profile, avatarImg: d.url, avatarFeatures: d.features }; setProfile(p); persist(p); }}
+        onProfileSaved={patch => { const p = { ...profile, name: patch.name || profile.name, email: patch.email ?? profile.email }; setProfile(p); }}
+        onLogout={async () => { try { await logout(); } catch {} setProfile(null); setPassportOpen(false); setStamps([]); }} />}
     </div>
   );
 }

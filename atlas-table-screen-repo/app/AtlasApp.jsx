@@ -99,9 +99,25 @@ function flagOf(name) {
 }
 // ALL_COUNTRIES computed lazily via allCountries() since MAPDATA loads at runtime
 
-/* ---------- progression ---------- */
+/* ---------- progression ----------
+   The backend still records one half-stamp per activity ({country, type: "food"|"cinema"}).
+   A country earns its single combined stamp only once both halves exist. */
+function countryProgress(stamps) {
+  const out = {}; // country -> { country, food, cinema }, in order of first activity
+  for (const s of stamps) {
+    const p = out[s.country] || (out[s.country] = { country: s.country, food: false, cinema: false });
+    if (s.type === "food") p.food = true; else p.cinema = true;
+  }
+  return out;
+}
+function countryStamps(stamps) {
+  return Object.values(countryProgress(stamps)).filter(p => p.food && p.cinema).map(p => p.country);
+}
+function inProgressCountries(stamps) {
+  return Object.values(countryProgress(stamps)).filter(p => p.food !== p.cinema);
+}
 function stampsInContinent(stamps, continent) {
-  return stamps.filter(s => orderOf(continent).includes(s.country)).length;
+  return countryStamps(stamps).filter(c => orderOf(continent).includes(c)).length;
 }
 function unlockedCount(stamps, continent) {
   return Math.min(orderOf(continent).length,
@@ -109,7 +125,15 @@ function unlockedCount(stamps, continent) {
 }
 function isUnlocked(stamps, continent, countryName) {
   const idx = orderOf(continent).indexOf(countryName);
-  return idx > -1 && idx < unlockedCount(stamps, continent);
+  if (idx < 0) return false;
+  // a country you've already started stays open so you can finish it
+  return idx < unlockedCount(stamps, continent) || stamps.some(s => s.country === countryName);
+}
+function unlockHint(stamps, continent) {
+  const need = STAMPS_PER_UNLOCK - (stampsInContinent(stamps, continent) % STAMPS_PER_UNLOCK);
+  const base = `complete both Kitchen & Cinema in ${need} more ${need > 1 ? "countries" : "country"}`;
+  const half = inProgressCountries(stamps).find(p => orderOf(continent).includes(p.country));
+  return half ? `${base} (${half.country} just needs its ${half.food ? "Cinema" : "Kitchen"})` : base;
 }
 function continentOf(countryName) {
   return CONTINENTS.find(ct => orderOf(ct).includes(countryName));
@@ -379,14 +403,13 @@ function WorldMap({ onPick, visited }) {
 function ContinentMap({ continent, stamps, onPickCountry, onLockedTap }) {
   const [hover, setHover] = useState(null);
   const nUnlocked = unlockedCount(stamps, continent);
-  const got = stampsInContinent(stamps, continent);
-  const nextIn = STAMPS_PER_UNLOCK - (got % STAMPS_PER_UNLOCK);
   const allOpen = nUnlocked >= orderOf(continent).length;
   const shapes = MAPDATA.continents[continent.id].shapes;
   const color = CONT_COLORS[continent.id];
 
   const playState = {};
-  orderOf(continent).forEach((name, idx) => { playState[name] = idx < nUnlocked; });
+  orderOf(continent).forEach(name => { playState[name] = isUnlocked(stamps, continent, name); });
+  const progress = countryProgress(stamps);
 
   const handle = (name, open) => open ? onPickCountry(name) : onLockedTap(continent, name);
 
@@ -399,14 +422,16 @@ function ContinentMap({ continent, stamps, onPickCountry, onLockedTap }) {
         ))}
         {shapes.filter(s => s.p).map(s => {
           const open = playState[s.n];
-          const cStamps = stamps.filter(x => x.country === s.n);
+          const pr = progress[s.n];
+          const done = pr && pr.food && pr.cinema;
           const isH = hover === s.n;
           return (
             <path key={s.n} d={s.d}
               fill={open ? color : "#1A2740"}
               opacity={open ? (isH ? 1 : 0.82) : 0.9}
-              stroke={cStamps.length ? C.brass : open ? C.paper : C.line}
-              strokeWidth={isH ? 1.4 : cStamps.length ? 1.2 : 0.8}
+              stroke={done ? C.brass : open ? C.paper : C.line}
+              strokeWidth={isH ? 1.4 : done ? 1.2 : 0.8}
+              strokeDasharray={pr && !done ? "2 2" : undefined}
               onMouseEnter={() => setHover(s.n)} onMouseLeave={() => setHover(null)}
               onClick={() => handle(s.n, open)}
               style={{ cursor: "pointer", transition: "opacity .15s" }} />
@@ -417,13 +442,15 @@ function ContinentMap({ continent, stamps, onPickCountry, onLockedTap }) {
             onClick={() => onLockedTap(continent, s.n)} style={{ cursor: "pointer" }}>{"🔒"}</text>
         ))}
         {shapes.filter(s => s.p && playState[s.n]).map(s => {
-          const cStamps = stamps.filter(x => x.country === s.n);
+          const pr = progress[s.n];
+          const done = pr && pr.food && pr.cinema;
           return (
             <g key={"m" + s.n} onClick={() => onPickCountry(s.n)}
                onMouseEnter={() => setHover(s.n)} onMouseLeave={() => setHover(null)}
                style={{ cursor: "pointer" }}>
               <circle cx={s.x} cy={s.y} r="9.5" fill={C.ink} opacity="0.9"
-                stroke={cStamps.length ? C.brass : C.reel} strokeWidth="1.5" />
+                stroke={done ? C.brass : C.reel} strokeWidth="1.5"
+                strokeDasharray={pr && !done ? "3 2" : undefined} />
               <text x={s.x} y={s.y + 3.5} textAnchor="middle" fontSize="9.5" style={{ pointerEvents: "none" }}>
                 {flagOf(s.n)}
               </text>
@@ -431,11 +458,13 @@ function ContinentMap({ continent, stamps, onPickCountry, onLockedTap }) {
                 style={{ pointerEvents: "none", paintOrder: "stroke", stroke: C.ink, strokeWidth: 2.5 }}>
                 {s.n.length > 16 ? s.n.slice(0, 15) + "…" : s.n}
               </text>
-              {cStamps.length > 0 && (
-                <text x={s.x + 10} y={s.y - 8} fontSize="8" style={{ pointerEvents: "none" }}>
-                  {cStamps.map(st => (st.type === "food" ? "🍴" : "🎬")).join("")}
+              {done ? (
+                <text x={s.x + 10} y={s.y - 8} fontSize="8" style={{ pointerEvents: "none" }}>🏷</text>
+              ) : pr ? (
+                <text x={s.x + 10} y={s.y - 8} fontSize="7" opacity="0.6" style={{ pointerEvents: "none" }}>
+                  {pr.food ? "🍴" : "🎬"}…
                 </text>
-              )}
+              ) : null}
             </g>
           );
         })}
@@ -443,7 +472,7 @@ function ContinentMap({ continent, stamps, onPickCountry, onLockedTap }) {
       <p style={{ textAlign: "center", color: C.dim, fontSize: 13, fontStyle: "italic", margin: "8px 0 0" }}>
         {allOpen
           ? "All of " + continent.name + " is open to you."
-          : `${nUnlocked}/${orderOf(continent).length} countries open · ${nextIn} more stamp${nextIn > 1 ? "s" : ""} here unlocks ${orderOf(continent)[nUnlocked]}`}
+          : `${nUnlocked}/${orderOf(continent).length} countries open · ${unlockHint(stamps, continent)} to unlock ${orderOf(continent)[nUnlocked]}`}
       </p>
     </div>
   );
@@ -466,7 +495,7 @@ function Onboarding({ onDone, submitting, authError }) {
     <div style={{ maxWidth: 460, margin: "40px auto", background: C.panel, border: `1px solid ${C.line}`, borderRadius: 14, padding: 28 }}>
       <Eyebrow>New expedition</Eyebrow>
       <h2 style={{ fontFamily: "Georgia, serif", color: C.paper, margin: "8px 0 4px", fontSize: 26 }}>Issue your passport</h2>
-      <p style={{ color: C.dim, fontSize: 14, marginTop: 0 }}>Every country you cook or watch your way through earns a stamp.</p>
+      <p style={{ color: C.dim, fontSize: 14, marginTop: 0 }}>Cook a country's food and watch its cinema to earn its passport stamp.</p>
 
       <label style={{ color: C.dim, fontSize: 12, letterSpacing: "0.08em", textTransform: "uppercase" }}>Traveler name</label>
       <input value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Prajay"
@@ -531,7 +560,9 @@ function Onboarding({ onDone, submitting, authError }) {
 
 /* ---------- passport ---------- */
 function Passport({ profile, stamps, onClose, onNewAvatar, onLogout, onProfileSaved }) {
-  const total = allCountries().length * 2;
+  const total = allCountries().length;
+  const earned = countryStamps(stamps);
+  const pending = inProgressCountries(stamps);
   const fileRef = useRef(null);
   const [photoErr, setPhotoErr] = useState(null);
   const [busyPhoto, setBusyPhoto] = useState(false);
@@ -620,20 +651,30 @@ function Passport({ profile, stamps, onClose, onNewAvatar, onLogout, onProfileSa
             <Btn onClick={saveSettings} disabled={saving} style={{ width: "100%" }}>{saving ? "Saving…" : "Save changes"}</Btn>
           </div>
         )}
-        <p style={{ color: C.dim, fontSize: 13 }}>{stamps.length} of {total} stamps · 🍴 kitchen · 🎬 cinema · stamps unlock new countries</p>
-        {stamps.length === 0 ? (
-          <p style={{ color: C.dim, fontStyle: "italic" }}>No stamps yet — open a country's Kitchen or Cinema to earn your first.</p>
+        <p style={{ color: C.dim, fontSize: 13 }}>{earned.length} of {total} country stamps · complete a country's 🍴 Kitchen and 🎬 Cinema to earn its stamp and unlock a new country</p>
+        {earned.length === 0 ? (
+          <p style={{ color: C.dim, fontStyle: "italic" }}>No stamps yet — finish both the Kitchen and Cinema of a country to earn your first.</p>
         ) : (
           <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 10 }}>
-            {stamps.map((s, i) => (
-              <div key={i} style={{
-                border: `1.5px dashed ${s.type === "food" ? C.chili : C.reel}`, borderRadius: 10,
+            {earned.map((country, i) => (
+              <div key={country} style={{
+                border: `1.5px dashed ${C.brass}`, borderRadius: 10,
                 padding: "10px 6px", textAlign: "center", transform: `rotate(${(i % 5 - 2) * 3}deg)`, background: C.ink,
               }}>
-                <div style={{ fontSize: 22 }}>{flagOf(s.country)}</div>
-                <div style={{ color: C.paper, fontSize: 12, fontWeight: 700 }}>{s.country}</div>
-                <div style={{ fontSize: 13 }}>{s.type === "food" ? "🍴" : "🎬"}</div>
+                <div style={{ fontSize: 22 }}>{flagOf(country)}</div>
+                <div style={{ color: C.paper, fontSize: 12, fontWeight: 700 }}>{country}</div>
+                <div style={{ fontSize: 13 }}>🍴🎬</div>
               </div>
+            ))}
+          </div>
+        )}
+        {pending.length > 0 && (
+          <div style={{ marginTop: 14, display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
+            <span style={{ color: C.dim, fontSize: 12 }}>In progress:</span>
+            {pending.map(p => (
+              <span key={p.country} title={`Needs its ${p.food ? "Cinema" : "Kitchen"}`} style={{ border: `1px dashed ${C.line}`, borderRadius: 999, padding: "3px 9px", fontSize: 12, color: C.dim, opacity: 0.8 }}>
+                {flagOf(p.country)} {p.country} · {p.food ? "🍴 ✓ · 🎬 …" : "🎬 ✓ · 🍴 …"}
+              </span>
             ))}
           </div>
         )}
@@ -691,9 +732,9 @@ function RecipePanel({ data, done, onCooked, sources }) {
       </div>
       <p style={{ color: C.dim, fontSize: 13, fontStyle: "italic", marginTop: 14 }}>{data.context}</p>
       {done ? (
-        <div style={{ marginTop: 10, color: C.brass, fontWeight: 800, fontSize: 14 }}>🍴 Cooked — Kitchen stamp earned</div>
+        <div style={{ marginTop: 10, color: C.brass, fontWeight: 800, fontSize: 14 }}>🍴 Cooked — Kitchen complete</div>
       ) : (
-        <Btn onClick={onCooked} color={C.chili} style={{ marginTop: 10 }}>🍴 I cooked this — claim the stamp</Btn>
+        <Btn onClick={onCooked} color={C.chili} style={{ marginTop: 10 }}>🍴 I cooked this — mark Kitchen complete</Btn>
       )}
       <Sources list={sources} />
     </div>
@@ -736,7 +777,7 @@ function CinemaPanel({ data, watched, onToggleWatched, sources }) {
           </div>
         ))}
       </div>
-      <p style={{ color: C.dim, fontSize: 11.5, fontStyle: "italic" }}>Ratings are drawn from the sources below where available — tap IMDb to confirm. Mark your first film watched to earn the Cinema stamp.</p>
+      <p style={{ color: C.dim, fontSize: 11.5, fontStyle: "italic" }}>Ratings are drawn from the sources below where available — tap IMDb to confirm. Mark your first film watched to complete the Cinema — finish the Kitchen too to earn the country stamp.</p>
       <Sources list={sources} />
     </div>
   );
@@ -943,7 +984,7 @@ function CountryView({ country, onBack, onStamp }) {
           </div>
         ) : (
           <p style={{ color: C.dim, fontStyle: "italic" }}>
-            Ask the kitchen for dish ideas from {country}. Pick one, cook it, and earn the Kitchen stamp.
+            Ask the kitchen for dish ideas from {country}. Pick one and cook it to complete the Kitchen — pair it with the Cinema to earn the country stamp.
           </p>
         )
       )}
@@ -963,7 +1004,7 @@ function CountryView({ country, onBack, onStamp }) {
           </div>
         ) : (
           <p style={{ color: C.dim, fontStyle: "italic" }}>
-            Ask for a watchlist from {country}'s cinema. Watch one to earn the Cinema stamp.
+            Ask for a watchlist from {country}'s cinema. Watch one to complete the Cinema — pair it with the Kitchen to earn the country stamp.
           </p>
         )
       )}
@@ -1123,14 +1164,19 @@ function FriendLookup() {
                 <AvatarBadge profile={{ avatarImg: result.avatarFeatures ? AvatarLib.featuresToUrl(result.avatarFeatures) : null, name: result.displayName }} size={30} />
                 <div>
                   <div style={{ color: C.paper, fontWeight: 700 }}>{result.displayName} <span style={{ color: C.dim, fontWeight: 400 }}>@{result.username}</span></div>
-                  <div style={{ color: C.brass, fontSize: 13 }}>{(result.stamps || []).length} 🏷 stamps earned</div>
+                  <div style={{ color: C.brass, fontSize: 13 }}>{countryStamps(result.stamps || []).length} 🏷 country stamps earned</div>
                 </div>
               </div>
               <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-                {(result.stamps || []).length === 0 && <span style={{ color: C.dim, fontSize: 13 }}>No stamps yet — they're just getting started.</span>}
-                {(result.stamps || []).map((s, i) => (
-                  <span key={i} style={{ background: C.ink, border: `1px solid ${C.line}`, borderRadius: 999, padding: "4px 10px", fontSize: 13, color: C.paper }}>
-                    {flagOf(s.country)} {s.country} · {s.type === "food" ? "🍴" : "🎬"}
+                {countryStamps(result.stamps || []).length === 0 && <span style={{ color: C.dim, fontSize: 13 }}>No country stamps yet — they're just getting started.</span>}
+                {countryStamps(result.stamps || []).map(country => (
+                  <span key={country} style={{ background: C.ink, border: `1px solid ${C.brass}`, borderRadius: 999, padding: "4px 10px", fontSize: 13, color: C.paper }}>
+                    {flagOf(country)} {country} · 🏷
+                  </span>
+                ))}
+                {inProgressCountries(result.stamps || []).map(p => (
+                  <span key={"ip" + p.country} style={{ border: `1px dashed ${C.line}`, borderRadius: 999, padding: "4px 10px", fontSize: 12, color: C.dim, opacity: 0.8 }}>
+                    {flagOf(p.country)} {p.country} · in progress
                   </span>
                 ))}
               </div>
@@ -1185,10 +1231,15 @@ export default function App() {
     const ct = continentOf(country);
     const before = unlockedCount(prev, ct);
     const after = unlockedCount(next, ct);
-    if (after > before && after <= orderOf(ct).length) {
-      showToast(`🔓 ${orderOf(ct)[after - 1]} unlocked in ${ct.name}!`);
+    const half = type === "food" ? "Kitchen" : "Cinema";
+    const other = type === "food" ? "Cinema" : "Kitchen";
+    const completed = countryStamps(next).includes(country);
+    if (completed && after > before && after <= orderOf(ct).length) {
+      showToast(`${flagOf(country)} ${country} stamp earned! 🔓 ${orderOf(ct)[after - 1]} unlocked in ${ct.name}!`);
+    } else if (completed) {
+      showToast(`${flagOf(country)} ${country} stamp earned — Kitchen & Cinema complete!`);
     } else {
-      showToast(`${flagOf(country)} Stamp earned — ${country} ${type === "food" ? "Kitchen" : "Cinema"}!`);
+      showToast(`${flagOf(country)} ${country} ${half} done — finish its ${other} to earn the stamp.`);
     }
   }, [stamps]);
 
@@ -1197,8 +1248,7 @@ export default function App() {
 
   const goToCountry = (ct, name, open) => {
     if (!open) {
-      const need = STAMPS_PER_UNLOCK - (stampsInContinent(stamps, ct) % STAMPS_PER_UNLOCK);
-      showToast(`🔒 ${name} is locked — ${need} more stamp${need > 1 ? "s" : ""} in ${ct.name} to open it.`);
+      showToast(`🔒 ${name} is locked — ${unlockHint(stamps, ct)} in ${ct.name} to open the next country.`);
       setView({ mode: "continent", continent: ct });
       return;
     }
@@ -1220,7 +1270,7 @@ export default function App() {
             borderRadius: 999, padding: "7px 14px", cursor: "pointer", color: C.paper, fontWeight: 700, fontSize: 14, fontFamily: "inherit",
           }}>
             <AvatarBadge profile={profile} size={24} /> {profile.name}
-            <span style={{ color: C.brass }}>· {stamps.length} 🏷</span>
+            <span style={{ color: C.brass }}>· {countryStamps(stamps).length} 🏷</span>
           </button>
         )}
       </header>
@@ -1245,8 +1295,7 @@ export default function App() {
             <ContinentMap continent={view.continent} stamps={stamps}
               onPickCountry={name => goToCountry(view.continent, name, true)}
               onLockedTap={(ct, name) => {
-                const need = STAMPS_PER_UNLOCK - (stampsInContinent(stamps, ct) % STAMPS_PER_UNLOCK);
-                showToast(`🔒 ${name} is locked — ${need} more stamp${need > 1 ? "s" : ""} in ${ct.name} opens the next country.`);
+                showToast(`🔒 ${name} is locked — ${unlockHint(stamps, ct)} in ${ct.name} to open the next country.`);
               }} />
           </div>
         ) : (
